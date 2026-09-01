@@ -205,61 +205,61 @@ def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_mod
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind GRPO (Group Relative Policy Optimization)")
-    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
-    parser.add_argument('--save_weight', default='grpo', type=str, help="保存权重的前缀名")
-    parser.add_argument("--epochs", type=int, default=1, help="训练轮数")
+    parser.add_argument("--save_dir", type=str, default="../out", help="Directory to save model checkpoints")
+    parser.add_argument('--save_weight', default='grpo', type=str, help="Prefix name for saved weights")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=2, help="batch size")
-    parser.add_argument("--learning_rate", type=float, default=3e-7, help="初始学习率")
-    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
-    parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
-    parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
-    parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
-    parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
-    parser.add_argument("--log_interval", type=int, default=1, help="日志打印间隔")
-    parser.add_argument("--save_interval", type=int, default=10, help="模型保存间隔")
-    parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
-    parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
-    parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
-    parser.add_argument('--max_seq_len', default=768, type=int, help="Prompt最大长度")
-    parser.add_argument("--max_gen_len", type=int, default=1024, help="生成的最大长度")
-    parser.add_argument("--data_path", type=str, default="../dataset/rlaif.jsonl", help="RLAIF数据路径")
-    parser.add_argument("--num_generations", type=int, default=6, help="每个prompt生成的样本数")
-    parser.add_argument("--beta", type=float, default=0.1, help="KL惩罚系数")
-    parser.add_argument("--loss_type", type=str, default="cispo", choices=["grpo", "cispo"], help="loss类型")
-    parser.add_argument("--epsilon", type=float, default=0.2, help="GRPO的PPO clip epsilon")
-    parser.add_argument("--epsilon_high", type=float, default=5.0, help="epsilon上界")
-    parser.add_argument('--from_weight', default='full_sft', type=str, help="基于哪个权重训练")
-    parser.add_argument("--reward_model_path", type=str, default="../../internlm2-1_8b-reward", help="Reward模型路径")
-    parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
-    parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
-    parser.add_argument("--wandb_project", type=str, default="MiniMind-GRPO", help="wandb项目名")
-    parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速（0=否，1=是）")
-    parser.add_argument("--debug_mode", action="store_true", help="是否打印训练调试采样")
-    parser.add_argument("--debug_interval", type=int, default=20, help="debug模式下每隔多少step打印一次采样")
-    parser.add_argument("--thinking_ratio", type=float, default=0.9, help="按概率开启thinking（0.0~1.0）")
-    parser.add_argument("--rollout_engine", type=str, default="torch", choices=["torch", "sglang"], help="rollout引擎类型")
-    parser.add_argument("--sglang_base_url", type=str, default="http://localhost:8998", help="SGLang服务器URL")
-    parser.add_argument("--sglang_model_path", type=str, default="../model", help="SGLang tokenizer路径")
-    parser.add_argument("--sglang_shared_path", type=str, default="./sglang_ckpt_grpo", help="SGLang共享存储路径")
+    parser.add_argument("--learning_rate", type=float, default=3e-7, help="Initial learning rate")
+    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="Training device")
+    parser.add_argument("--dtype", type=str, default="bfloat16", help="Mixed precision dtype")
+    parser.add_argument("--num_workers", type=int, default=8, help="Number of data loader workers")
+    parser.add_argument("--accumulation_steps", type=int, default=1, help="Gradient accumulation steps")
+    parser.add_argument("--grad_clip", type=float, default=1.0, help="Gradient clipping threshold")
+    parser.add_argument("--log_interval", type=int, default=1, help="Logging interval (steps)")
+    parser.add_argument("--save_interval", type=int, default=10, help="Checkpoint save interval (steps)")
+    parser.add_argument('--hidden_size', default=768, type=int, help="Hidden size")
+    parser.add_argument('--num_hidden_layers', default=8, type=int, help="Number of hidden layers")
+    parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="Use MoE architecture (0=no, 1=yes)")
+    parser.add_argument('--max_seq_len', default=768, type=int, help="Maximum prompt length")
+    parser.add_argument("--max_gen_len", type=int, default=1024, help="Maximum generation length")
+    parser.add_argument("--data_path", type=str, default="../dataset/rlaif.jsonl", help="RLAIF data path")
+    parser.add_argument("--num_generations", type=int, default=6, help="Number of completions per prompt")
+    parser.add_argument("--beta", type=float, default=0.1, help="KL penalty coefficient")
+    parser.add_argument("--loss_type", type=str, default="cispo", choices=["grpo", "cispo"], help="Loss type")
+    parser.add_argument("--epsilon", type=float, default=0.2, help="GRPO PPO clip epsilon")
+    parser.add_argument("--epsilon_high", type=float, default=5.0, help="Upper epsilon bound")
+    parser.add_argument('--from_weight', default='full_sft', type=str, help="Base checkpoint to train from")
+    parser.add_argument("--reward_model_path", type=str, default="../../internlm2-1_8b-reward", help="Reward model path")
+    parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="Auto-detect and resume training (0=no, 1=yes)")
+    parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--wandb_project", type=str, default="MiniMind-GRPO", help="W&B project name")
+    parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="Use torch.compile for speed (0=no, 1=yes)")
+    parser.add_argument("--debug_mode", action="store_true", help="Print debug rollout samples during training")
+    parser.add_argument("--debug_interval", type=int, default=20, help="Debug sample print interval (steps)")
+    parser.add_argument("--thinking_ratio", type=float, default=0.9, help="Probability of enabling thinking mode (0.0-1.0)")
+    parser.add_argument("--rollout_engine", type=str, default="torch", choices=["torch", "sglang"], help="Rollout engine type")
+    parser.add_argument("--sglang_base_url", type=str, default="http://localhost:8998", help="SGLang server URL")
+    parser.add_argument("--sglang_model_path", type=str, default="../model", help="SGLang tokenizer path")
+    parser.add_argument("--sglang_shared_path", type=str, default="./sglang_ckpt_grpo", help="SGLang shared checkpoint path")
     args = parser.parse_args()
 
-    # ========== 1. 初始化环境和随机种子 ==========
+    # ========== 1. Init environment and random seed ==========
     local_rank = init_distributed_mode()
     if dist.is_initialized(): args.device = f"cuda:{local_rank}"
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
-    # ========== 2. 配置目录、模型参数、检查ckp ==========
+    # ========== 2. Configure dirs, model config, check checkpoint ==========
     os.makedirs(args.save_dir, exist_ok=True)
     lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers,
                                max_seq_len=args.max_seq_len + args.max_gen_len, use_moe=bool(args.use_moe))
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
-    # ========== 3. 设置混合精度 ==========
+    # ========== 3. Set up mixed precision ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
     autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
     
-    # ========== 4. 配wandb ==========
+    # ========== 4. Configure wandb ==========
     wandb = None
     if args.use_wandb and is_main_process():
         import swanlab as wandb
@@ -268,16 +268,16 @@ if __name__ == "__main__":
         wandb_run_name = f"MiniMind-GRPO-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
     
-    # ========== 5. 初始化模型和数据 ==========
+    # ========== 5. Init models and data ==========
     base_weight = args.from_weight
-    # Policy模型
+    # Policy model
     model, tokenizer = init_model(lm_config, base_weight, device=args.device)
-    # Reference模型
+    # Reference model
     ref_model, _ = init_model(lm_config, base_weight, device=args.device)
     ref_model = ref_model.eval().requires_grad_(False)
-    # Reward模型
+    # Reward model
     reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)
-    # Rollout引擎（可插拔替换，只负责 policy 推理）
+    # Pluggable rollout engine (policy inference only)
     rollout_engine = create_rollout_engine(
         engine_type=args.rollout_engine,
         policy_model=model,
@@ -288,7 +288,7 @@ if __name__ == "__main__":
         sglang_model_path=args.sglang_model_path,
         sglang_shared_path=args.sglang_shared_path,
     )
-    # 数据和优化器
+    # Data and optimizer
     train_ds = RLAIFDataset(args.data_path, tokenizer, max_length=lm_config.max_seq_len, thinking_ratio=args.thinking_ratio)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
@@ -297,7 +297,7 @@ if __name__ == "__main__":
     total_optimizer_steps = math.ceil(iters / args.accumulation_steps) * args.epochs
     scheduler = CosineAnnealingLR(optimizer, T_max=total_optimizer_steps, eta_min=args.learning_rate / 10)
     
-    # ========== 6. 从ckp恢复状态 ==========
+    # ========== 6. Restore state from checkpoint ==========
     start_epoch, start_step = 0, 0
     if ckp_data:
         model.load_state_dict(ckp_data['model'])
@@ -306,7 +306,7 @@ if __name__ == "__main__":
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
     
-    # ========== 7. 编译和分布式包装 ==========
+    # ========== 7. Compile and distributed wrap ==========
     if args.use_compile == 1:
         model = torch.compile(model)
         Logger('torch.compile enabled')
@@ -315,7 +315,7 @@ if __name__ == "__main__":
         model = DistributedDataParallel(model, device_ids=[local_rank])
     rollout_engine.update_policy(model)
     
-    # ========== 8. 开始训练 ==========
+    # ========== 8. Start training ==========
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
@@ -323,12 +323,12 @@ if __name__ == "__main__":
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
         if skip > 0: 
-            Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
+            Logger(f'Epoch [{epoch + 1}/{args.epochs}]: skipping first {start_step} steps, resuming from step {start_step + 1}')
             grpo_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, reward_model, start_step, wandb, use_sglang = (args.rollout_engine == "sglang"))
         else:
             grpo_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, reward_model, 0, wandb, use_sglang = (args.rollout_engine == "sglang"))
     
-    # ========== 9. 清理分布进程 ==========
+    # ========== 9. Tear down distributed process group ==========
     if dist.is_initialized():
         dist.barrier()
         dist.destroy_process_group()
