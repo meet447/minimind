@@ -25,6 +25,17 @@ CJK_RE = re.compile(
     r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]"
 )
 ALLOWED_ROLES = {"user", "assistant", "system"}
+TOOL_MARKERS = ("<tool_call>", "<tools>", "you have access to the following tools")
+
+
+def has_tool_trace(message: dict) -> bool:
+    if message.get("tool_calls") or message.get("tools"):
+        return True
+    content = str(message.get("content", ""))
+    lower = content.lower()
+    if any(marker in lower for marker in TOOL_MARKERS):
+        return True
+    return False
 
 
 @dataclass
@@ -94,6 +105,9 @@ def passes_pretrain_text(text: str) -> tuple[bool, str]:
 
 
 def normalize_messages(messages: list[dict]) -> Optional[list[dict]]:
+    if any(has_tool_trace(message) for message in messages):
+        return None
+
     cleaned: list[dict] = []
     for message in messages:
         role = str(message.get("role", "")).strip().lower()
@@ -243,9 +257,14 @@ def write_sft(
                 stats.skipped_empty += 1
                 continue
 
-            dedup_key = "\n".join(
+            joined = "\n".join(
                 f"{turn['role']}: {turn['content']}" for turn in conversations
             )
+            if is_mostly_cjk(joined):
+                stats.skipped_cjk += 1
+                continue
+
+            dedup_key = joined
             if deduper.is_duplicate(dedup_key):
                 stats.skipped_dedup += 1
                 continue
