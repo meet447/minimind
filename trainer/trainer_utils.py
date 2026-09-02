@@ -90,11 +90,18 @@ def setup_seed(seed: int, deterministic: bool = True):
     torch.backends.cudnn.deterministic = deterministic
     torch.backends.cudnn.benchmark = not deterministic
 
+def weight_tag(lm_config):
+    """Checkpoint suffix. 8-layer 768 stays `768` so existing MiniMind-3 files still match."""
+    moe = '_moe' if getattr(lm_config, 'use_moe', False) else ''
+    layers = '' if getattr(lm_config, 'num_hidden_layers', 8) == 8 else f'_L{lm_config.num_hidden_layers}'
+    return f'{lm_config.hidden_size}{layers}{moe}'
+
+
 def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoch=0, step=0, wandb=None, save_dir='../checkpoints', **kwargs):
     os.makedirs(save_dir, exist_ok=True)
-    moe_path = '_moe' if lm_config.use_moe else ''
-    ckp_path = f'{save_dir}/{weight}_{lm_config.hidden_size}{moe_path}.pth'
-    resume_path = f'{save_dir}/{weight}_{lm_config.hidden_size}{moe_path}_resume.pth'
+    tag = weight_tag(lm_config)
+    ckp_path = f'{save_dir}/{weight}_{tag}.pth'
+    resume_path = f'{save_dir}/{weight}_{tag}_resume.pth'
 
     if model is not None:
         raw_model = model.module if isinstance(model, DistributedDataParallel) else model
@@ -151,8 +158,7 @@ def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', sav
     model = MiniMindForCausalLM(lm_config)
 
     if from_weight!= 'none':
-        moe_suffix = '_moe' if lm_config.use_moe else ''
-        weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+        weight_path = f'{save_dir}/{from_weight}_{weight_tag(lm_config)}.pth'
         weights = torch.load(weight_path, map_location=device)
         model.load_state_dict(weights, strict=False)
 

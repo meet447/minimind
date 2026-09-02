@@ -1,14 +1,33 @@
 # MiniMind English Fork — Quality Roadmap
 
-This fork keeps MiniMind's ~64M dense recipe and native-PyTorch pipeline. The goal is a **better English model at the same size and roughly the same wall-clock**, not a bigger model.
+Upstream: [jingyaogong/minimind](https://github.com/jingyaogong/minimind). This fork is English-first.
 
-Upstream: [jingyaogong/minimind](https://github.com/jingyaogong/minimind). This repo: English-first docs, CLI, eval, and (next) English data + training efficiency.
+**Product goal:** a **~128M dense** model that produces **sensible English** for basic use (short answers, simple summaries, easy explanations) on a **single T4 / 3090-class GPU**. Not SOTA. Not a 7B. Not MoE.
+
+**Locked MiniMind-128 recipe** (measured):
+
+| Knob | MiniMind-3 (shipped) | MiniMind-128 (this goal) |
+|------|----------------------|---------------------------|
+| Params | 63.91M | **122.91M** |
+| Shape | 8 × 768 | **16 × 768** (same width, 2× depth) |
+| GQA / head_dim | 8Q/4KV, 96 | unchanged |
+| Vocab | 6400 tied | **6400 English BPE**, same specials |
+| FFN | SwiGLU, intermediate 2432 | unchanged |
+| MoE | off | **off** |
+
+Why 16×768 and not 10×1024 (138M) or 12×896 (125M): at this size depth beats width (MobileLLM / SmolLM). Keeping 768 reuses the MiniMind-3 kernel shape, GQA, and T4 compile path. ~123M is the 128M target without inventing a new width.
+
+**T4 budget (fp16, packing, `torch.compile`):** ~2× the 64M step cost. Expect roughly **4–6h pretrain + 5–8h SFT** for the English mini mix (one epoch each). That is “not heavy compute.”
+
+**Done already:** English repo (Phase 0), packing/warmup/AdamW groups (Phase 1), T4 64M smoke train on Chinese mini data, Hub + Space (`meet447/minimind`, `meet447/minimind-chat`).
+
+**Now:** English tokenizer + English mini jsonl + 128M init, then train from scratch (old 64M `.pth` will not load into 16 layers).
 
 ---
 
 ## 1. Current-state diagnosis
 
-### Architecture (already modern — do not grow it)
+### Architecture
 
 | Knob | MiniMind-3 default | Notes |
 |------|--------------------|--------|
@@ -18,7 +37,7 @@ Upstream: [jingyaogong/minimind](https://github.com/jingyaogong/minimind). This 
 | FFN | SwiGLU, `intermediate ≈ π × hidden` rounded to 64 | Fine |
 | MoE | 4 experts, top-1, ~198M-A64M | Native PyTorch MoE is ~50% slower. **Not the English default.** |
 
-MobileLLM is right that depth often beats width at ~100M, but MiniMind already chose 8×768 as a **train-speed** tradeoff. Do not add layers unless you drop width and accept slower steps.
+MiniMind-3 used 8×768 as a train-speed tradeoff. MiniMind-128 spends that 2× depth budget because the product goal is **sensible English**, not a 2-hour 64M tutorial run.
 
 ### Tokenizer (main English bottleneck)
 
@@ -67,12 +86,13 @@ For a 64M model, **tokens seen / hour** and **data quality** dominate architectu
 
 ## 2. Non-goals
 
-- Do not raise the default param count above ~64M.
+- Do not grow past ~128M for v1 (no 16×1024, no 30-layer SmolLM clone).
 - Do not default to MoE.
 - Do not wrap training in Hugging Face `Trainer` / TRL (keep native PyTorch).
-- Do not jump vocab to 32k–128k (embeddings would eat the budget).
-- Do not train long CoT / huge R1 traces on 64M as the main path.
+- Do not jump vocab to 32k–128k (embeddings would eat the 128M budget).
+- Do not train long CoT / huge R1 traces as the main path.
 - Do not replace the educational “from-scratch” code with a megatron stack.
+- Do not keep training the Chinese-mini 64M checkpoint as the English product.
 
 ---
 
@@ -163,15 +183,15 @@ For a 64M model, **tokens seen / hour** and **data quality** dominate architectu
 
 ### Phase 4 — Tiny-model recipe + English eval
 
-**Goal:** Stabilize 64M training and measure English, not C-Eval.
+**Goal:** Stabilize 128M training and measure English, not C-Eval.
 
 **Changes (all cheap):**
 
-- Residual / output init scale `1/sqrt(2 * n_layers)` on `o_proj` and `down_proj` (GPT-2 / Small-init).
+- Residual / output init scale `1/sqrt(2 * n_layers)` on `o_proj` and `down_proj` (GPT-2 / Small-init). Required at 16 layers.
 - Optional **z-loss** `1e-4 * logZ²` on the CE logits (PaLM). Flag `--z_loss`, default off until measured.
-- SFT lr **2e-5–5e-5** for 64M (1e-5 is conservative).
-- Pretrain `max_seq_len=512` once packing exists (340 was a Chinese-char heuristic).
-- Eval: replace C-Eval/C-MMLU as the default with **HellaSwag, ARC-Easy, PIQA, OpenBookQA**, plus a 20-prompt English generation suite in `eval_llm.py` (already started). Add a thin `lm-eval-harness` wrapper later; do not vendor a huge bench.
+- SFT lr **2e-5–5e-5** (1e-5 is conservative).
+- Pretrain `max_seq_len=512` (340 was a Chinese-char heuristic).
+- Eval: **HellaSwag, ARC-Easy**, plus a 20-prompt English generation suite (summarize, explain, short Q&A). Add a thin `lm-eval-harness` wrapper later; do not vendor a huge bench.
 
 **Files:** `model/model_minimind.py` (`_init_weights`), `trainer/train_*.py`, `eval_llm.py`, new `scripts/eval_english.py`.
 
@@ -185,31 +205,36 @@ For a 64M model, **tokens seen / hour** and **data quality** dominate architectu
 
 ---
 
-## 4. Recommended English mini recipe (64M dense)
+## 4. Recommended English mini recipe (MiniMind-128)
 
-Single 3090-class GPU, same order of cost as upstream “~2 hours”:
+Tesla T4 16GB (fp16) or a 3090 (bf16). Packing + warmup from Phase 1 required.
 
 ```bash
-# after Phase 1–3 land
+# after tokenizer + jsonl land
 cd trainer
 
 python train_pretrain.py \
+  --preset minimind-128 \
   --data_path ../dataset/pretrain_en_mini.jsonl \
-  --hidden_size 768 --num_hidden_layers 8 \
-  --max_seq_len 512 --batch_size 32 --accumulation_steps 8 \
+  --dtype float16 \
+  --fast 1 --pack 1 --use_compile 1 \
+  --max_seq_len 512 --batch_size 32 --accumulation_steps 4 \
   --learning_rate 5e-4 --epochs 1 \
   --from_weight none
 
 python train_full_sft.py \
+  --preset minimind-128 \
   --data_path ../dataset/sft_en_mini.jsonl \
+  --dtype float16 \
+  --fast 1 --use_compile 1 \
   --from_weight pretrain \
-  --max_seq_len 768 --batch_size 16 \
+  --max_seq_len 512 --batch_size 8 --accumulation_steps 2 \
   --learning_rate 3e-5 --epochs 1
 ```
 
-Token target, not “2 epochs of padded rows”: about **0.4–1.0B pretrain tokens** then **0.1–0.3B SFT tokens** for the mini path. Full path: 2–5B FineWeb-Edu + 0.5B SFT if you have the hours.
+Token target: about **0.4–0.8B pretrain tokens** then **0.1–0.2B SFT tokens**. If T4 OOM, drop batch first, not layers.
 
-Defaults to keep: `bfloat16`, `grad_clip=1.0`, `use_moe=0`, flash attn, tied embeddings, vocab 6400.
+Defaults to keep: `use_moe=0`, flash attn, tied embeddings, vocab 6400, residual init `1/sqrt(2N)`.
 
 ---
 
@@ -217,21 +242,23 @@ Defaults to keep: `bfloat16`, `grad_clip=1.0`, `use_moe=0`, flash attn, tied emb
 
 | Temptation | Why skip |
 |------------|----------|
-| Vocab 32k+ | Embeddings become 25M+ of a 64M model |
-| 16 layers at 768 | Slower, more VRAM; not “fast training” |
+| Vocab 32k+ | Embeddings become 25M+ of a 128M model |
+| 10×1024 or 12×1024 | Wider, more VRAM, worse small-model quality than 16×768 |
 | MoE as default | +50% train time in this codebase |
-| Distill from 7B into 64M as the only pretrain | Useful as a **supplement**, not a replacement for clean English text |
-| 10k-token CoT SFT | 64M cannot hold that style; wastes ctx |
+| Distill from 7B as the only pretrain | Useful as a **supplement**, not a replacement for clean English text |
+| 10k-token CoT SFT | 128M still cannot hold that style; wastes ctx |
 | Train on the full Chinese `sft_t2t.jsonl` “for more data” | Wrong language; English quality will stall |
-| muP / custom kernels first | Diminishing returns vs packing + data |
+| muP / custom kernels first | Diminishing returns vs packing + English data |
 
 ---
 
-## 6. Suggested PR order after this one
+## 6. Build order for MiniMind-128
 
-1. **Packing + warmup + AdamW groups** (Phase 1) — no data download required to review the code.
-2. **`prepare_english_data.py`** + tokenizer retrain (Phase 2–3).
-3. **Init scale + English eval** (Phase 4).
-4. DPO English (Phase 5) only if SFT generation is already coherent.
+1. **Phase 1 packing** — done (merged).
+2. **English 6400 tokenizer + `prepare_english_data.py`** (this work) — must land **before** any 128M pretrain.
+3. Residual `1/sqrt(2N)` init + `--preset minimind-128` (this work).
+4. T4 pretrain + SFT from scratch → push `meet447/minimind` → reload Space.
+5. 20-prompt English smoke + optional ARC-Easy / HellaSwag.
+6. DPO English only if SFT already writes coherent sentences.
 
-Each step should be measurable: padding%, tokens/sec, English chars/token, and a fixed 20-prompt qualitative file plus ARC-Easy / HellaSwag when compute allows.
+Each step should be measurable: padding%, tokens/sec, English chars/token, and a fixed 20-prompt qualitative file.

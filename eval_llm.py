@@ -5,6 +5,8 @@ import warnings
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextStreamer
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
+from model.presets import apply_preset
+from trainer.trainer_utils import weight_tag
 from model.model_lora import *
 from trainer.trainer_utils import setup_seed, get_model_params
 warnings.filterwarnings('ignore')
@@ -12,14 +14,14 @@ warnings.filterwarnings('ignore')
 def init_model(args):
     tokenizer = AutoTokenizer.from_pretrained(args.load_from)
     if 'model' in args.load_from:
-        model = MiniMindForCausalLM(MiniMindConfig(
+        cfg = MiniMindConfig(
             hidden_size=args.hidden_size,
             num_hidden_layers=args.num_hidden_layers,
             use_moe=bool(args.use_moe),
             inference_rope_scaling=args.inference_rope_scaling
-        ))
-        moe_suffix = '_moe' if args.use_moe else ''
-        ckp = f'./{args.save_dir}/{args.weight}_{args.hidden_size}{moe_suffix}.pth'
+        )
+        model = MiniMindForCausalLM(cfg)
+        ckp = f'./{args.save_dir}/{args.weight}_{weight_tag(cfg)}.pth'
         model.load_state_dict(torch.load(ckp, map_location=args.device), strict=True)
         if args.lora_weight != 'None':
             apply_lora(model)
@@ -35,6 +37,7 @@ def main():
     parser.add_argument('--save_dir', default='out', type=str, help="Model weights directory")
     parser.add_argument('--weight', default='full_sft', type=str, help="Weight name prefix (pretrain, full_sft, rlhf, reason, ppo_actor, grpo, spo)")
     parser.add_argument('--lora_weight', default='None', type=str, help="LoRA weight name (None=disabled; options: lora_identity, lora_medical)")
+    parser.add_argument('--preset', default='', type=str, help="Size preset: minimind-3 or minimind-128")
     parser.add_argument('--hidden_size', default=768, type=int, help="Hidden layer dimension")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="Number of hidden layers")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="Use MoE architecture (0=no, 1=yes)")
@@ -47,11 +50,13 @@ def main():
     parser.add_argument('--show_speed', default=1, type=int, help="Show decode speed (tokens/s)")
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', type=str, help="Device to run on")
     args = parser.parse_args()
+    apply_preset(args)
     
     prompts = [
         'What are your strengths and specialties?',
         'Why is the sky blue?',
         'Write a Python function to compute the Fibonacci sequence',
+        'Summarize this in two sentences: Large language models are trained on text to predict the next token. Smaller models can still summarize and answer simple questions if they see enough clean English.',
         'Explain the basic process of photosynthesis',
         'If it rains tomorrow, how should I prepare to go out?',
         'Compare the pros and cons of cats and dogs as pets',
