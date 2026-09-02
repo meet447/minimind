@@ -15,8 +15,8 @@ from torch import optim, nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
-from dataset.lm_dataset import PretrainDataset
-from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler
+from dataset.lm_dataset import PretrainDataset, collate_pretrain_packed
+from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, create_optimizer
 
 warnings.filterwarnings('ignore')
 
@@ -24,11 +24,11 @@ warnings.filterwarnings('ignore')
 def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
     start_time = time.time()
     last_step = start_step
-    for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
-        input_ids = input_ids.to(args.device)
-        labels = labels.to(args.device)
+    real_tokens = 0
+    for step, batch in enumerate(loader, start=start_step + 1):
+        input_ids, labels = batch[0].to(args.device, non_blocking=True), batch[1].to(args.device, non_blocking=True)
         last_step = step
-        lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate)
+        lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate, warmup_ratio=args.warmup_ratio)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
@@ -48,15 +48,19 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
 
             optimizer.zero_grad(set_to_none=True)
 
+        n_real = (labels != -100).sum().item()
+        real_tokens += n_real
         if step % args.log_interval == 0 or step == iters:
             spend_time = time.time() - start_time
             current_loss = loss.item() * args.accumulation_steps
             current_aux_loss = res.aux_loss.item() if res.aux_loss is not None else 0.0
             current_logits_loss = current_loss - current_aux_loss
             current_lr = optimizer.param_groups[-1]['lr']
-            eta_min = spend_time / max(step - start_step, 1) * (iters - step) // 60
-            Logger(f'Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, logits_loss: {current_logits_loss:.4f}, aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min')
-            if wandb: wandb.log({"loss": current_loss, "logits_loss": current_logits_loss, "aux_loss": current_aux_loss, "learning_rate": current_lr, "epoch_time": eta_min})
+            eta_min = spend_time / max(step - start_step, 1) * (iters - step) / 60
+            tok_s = real_tokens / max(spend_time, 1e-6)
+            pad_frac = 1.0 - n_real / max(labels.numel(), 1)
+            Logger(f'Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, logits_loss: {current_logits_loss:.4f}, aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, tok/s: {tok_s:.0f}, pad: {pad_frac:.1%}, epoch_time: {eta_min:.1f}min')
+            if wandb: wandb.log({"loss": current_loss, "logits_loss": current_logits_loss, "aux_loss": current_aux_loss, "learning_rate": current_lr, "tokens_per_sec": tok_s, "pad_frac": pad_frac, "epoch_time": eta_min})
 
         if (step % args.save_interval == 0 or step == iters) and is_main_process():
             model.eval()
@@ -104,12 +108,16 @@ if __name__ == "__main__":
     parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
     parser.add_argument("--wandb_project", type=str, default="MiniMind-Pretrain", help="W&B project name")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="Use torch.compile for speed (0=no, 1=yes)")
+    parser.add_argument("--pack", default=1, type=int, choices=[0, 1], help="Pack documents into full sequences (0=pad each sample, 1=pack)")
+    parser.add_argument("--fast", default=0, type=int, choices=[0, 1], help="Disable cudnn determinism for extra speed (0=no, 1=yes)")
+    parser.add_argument("--warmup_ratio", default=0.03, type=float, help="Linear LR warmup fraction of total steps")
+    parser.add_argument("--weight_decay", default=0.1, type=float, help="AdamW weight decay on matmul weights")
     args = parser.parse_args()
 
     # ========== 1. Init environment and random seed ==========
     local_rank = init_distributed_mode()
     if dist.is_initialized(): args.device = f"cuda:{local_rank}"
-    setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
+    setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0), deterministic=args.fast == 0)
     
     # ========== 2. Configure dirs, model config, check checkpoint ==========
     os.makedirs(args.save_dir, exist_ok=True)
@@ -132,10 +140,12 @@ if __name__ == "__main__":
     
     # ========== 5. Define model, data, optimizer ==========
     model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
-    train_ds = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
+    train_ds = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len, pad=args.pack == 0)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == 'float16'))
-    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
+    optimizer = create_optimizer(model, args.learning_rate, weight_decay=args.weight_decay)
+    pad_id = tokenizer.pad_token_id
+    collate_fn = (lambda b: collate_pretrain_packed(b, pad_id, args.max_seq_len)) if args.pack == 1 else None
     
     # ========== 6. Restore state from checkpoint ==========
     start_epoch, start_step = 0, 0
@@ -156,10 +166,10 @@ if __name__ == "__main__":
     # ========== 8. Start training ==========
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
-        setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
+        setup_seed(42 + epoch, deterministic=args.fast == 0); indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
-        loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
+        loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True, collate_fn=collate_fn, persistent_workers=args.num_workers > 0)
         if skip > 0: 
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: skipping first {start_step} steps, resuming from step {start_step + 1}')
             train_epoch(epoch, loader, len(loader) + skip, start_step, wandb)
