@@ -39,4 +39,4 @@ python scripts/prepare_english_data.py \
 
 **Pretrain mix (streaming):** ~75% `HuggingFaceFW/fineweb-edu` (`sample-10BT`), ~15% `roneneldan/TinyStories`, ~10% `HuggingFaceTB/smollm-corpus` (`cosmopedia-v2`). Optional code (`python-edu`) is skipped — the Hub subset is metadata-only.
 
-**SFT:** `HuggingFaceTB/smoltalk` (`all`) → `user` / `assistant` / `system` turns only.
+**SFT:** `HuggingFaceTB/smoltalk` (`all`) → `user` / `assistant` / `system` turns only; tool-call traces dropped.

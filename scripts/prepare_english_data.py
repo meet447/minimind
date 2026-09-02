@@ -341,7 +341,7 @@ def print_summary(
     print(
         f"  kept={sft_stats.kept:,} rows, {bytes_to_gb(sft_stats.bytes_written):.3f} GB "
         f"(seen={sft_stats.seen:,}, invalid={sft_stats.skipped_empty:,}, "
-        f"dedup={sft_stats.skipped_dedup:,}) "
+        f"cjk={sft_stats.skipped_cjk:,}, dedup={sft_stats.skipped_dedup:,}) "
         f"-> {out_dir / SFT_OUT}"
     )
 
