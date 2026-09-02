@@ -37,8 +37,38 @@ def Logger(content):
         print(content)
 
 
-def get_lr(current_step, total_steps, lr):
-    return lr*(0.1 + 0.45*(1 + math.cos(math.pi * current_step / total_steps)))
+def get_lr(current_step, total_steps, lr, warmup_ratio=0.03):
+    if total_steps <= 0:
+        return lr
+    warmup_steps = int(total_steps * warmup_ratio) if warmup_ratio > 0 else 0
+    if warmup_steps and current_step <= warmup_steps:
+        return lr * current_step / max(warmup_steps, 1)
+    progress = (current_step - warmup_steps) / max(1, total_steps - warmup_steps)
+    progress = min(max(progress, 0.0), 1.0)
+    return lr * (0.1 + 0.45 * (1 + math.cos(math.pi * progress)))
+
+
+def create_optimizer(model, lr, weight_decay=0.1):
+    decay, no_decay, seen = [], [], set()
+    skip = ('bias', 'norm', 'embed_tokens', 'lm_head')
+    for name, param in model.named_parameters():
+        if not param.requires_grad or id(param) in seen:
+            continue
+        seen.add(id(param))
+        if param.ndim < 2 or any(k in name for k in skip):
+            no_decay.append(param)
+        else:
+            decay.append(param)
+    groups = []
+    if decay:
+        groups.append({'params': decay, 'weight_decay': weight_decay})
+    if no_decay:
+        groups.append({'params': no_decay, 'weight_decay': 0.0})
+    kwargs = dict(lr=lr)
+    try:
+        return torch.optim.AdamW(groups, fused=True, **kwargs)
+    except TypeError:
+        return torch.optim.AdamW(groups, **kwargs)
 
 
 def init_distributed_mode():
@@ -51,14 +81,14 @@ def init_distributed_mode():
     return local_rank
 
 
-def setup_seed(seed: int):
+def setup_seed(seed: int, deterministic: bool = True):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = deterministic
+    torch.backends.cudnn.benchmark = not deterministic
 
 def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoch=0, step=0, wandb=None, save_dir='../checkpoints', **kwargs):
     os.makedirs(save_dir, exist_ok=True)

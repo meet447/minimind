@@ -36,10 +36,11 @@ def post_processing_chat(prompt_content, empty_think_ratio=0.2):
     return prompt_content
 
 class PretrainDataset(Dataset):
-    def __init__(self, data_path, tokenizer, max_length=512):
+    def __init__(self, data_path, tokenizer, max_length=512, pad=True):
         super().__init__()
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.pad = pad
         self.samples = load_dataset('json', data_files=data_path, split='train')
 
     def __len__(self):
@@ -49,6 +50,8 @@ class PretrainDataset(Dataset):
         sample = self.samples[index]
         tokens = self.tokenizer(str(sample['text']), add_special_tokens=False, max_length=self.max_length - 2, truncation=True).input_ids
         tokens = [self.tokenizer.bos_token_id] + tokens + [self.tokenizer.eos_token_id]
+        if not self.pad:
+            return torch.tensor(tokens, dtype=torch.long)
         input_ids = tokens + [self.tokenizer.pad_token_id] * (self.max_length - len(tokens))
         input_ids = torch.tensor(input_ids, dtype=torch.long)
         labels = input_ids.clone()
@@ -56,11 +59,53 @@ class PretrainDataset(Dataset):
         return input_ids, labels
 
 
+def collate_pretrain_packed(batch, pad_id, max_length):
+    """Pack variable-length docs into full max_length rows so Flash SDPA stays on."""
+    docs = []
+    for item in batch:
+        ids = item.tolist() if torch.is_tensor(item) else list(item)
+        if ids:
+            docs.append(ids[:max_length])
+    packed = []
+    buf = []
+    for doc in docs:
+        if len(buf) + len(doc) > max_length:
+            if buf:
+                packed.append(buf + [pad_id] * (max_length - len(buf)))
+            buf = list(doc)
+        else:
+            buf.extend(doc)
+    if buf:
+        packed.append(buf + [pad_id] * (max_length - len(buf)))
+    if not packed:
+        packed = [[pad_id] * max_length]
+    input_ids = torch.tensor(packed, dtype=torch.long)
+    labels = input_ids.clone()
+    labels[input_ids == pad_id] = -100
+    return input_ids, labels
+
+
+def collate_sft_dynamic(batch, pad_id):
+    """Pad SFT samples to the longest item in the batch, not a global max."""
+    ids_list, labels_list = zip(*batch)
+    max_len = max(t.size(0) for t in ids_list)
+    input_rows, label_rows = [], []
+    for ids, labels in zip(ids_list, labels_list):
+        n = max_len - ids.size(0)
+        if n:
+            ids = torch.cat([ids, ids.new_full((n,), pad_id)])
+            labels = torch.cat([labels, labels.new_full((n,), -100)])
+        input_rows.append(ids)
+        label_rows.append(labels)
+    return torch.stack(input_rows, 0), torch.stack(label_rows, 0)
+
+
 class SFTDataset(Dataset):
-    def __init__(self, jsonl_path, tokenizer, max_length=1024):
+    def __init__(self, jsonl_path, tokenizer, max_length=1024, pad=True):
         super().__init__()
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.pad = pad
         features = Features({'conversations': [{'role': Value('string'), 'content': Value('string'), 'reasoning_content': Value('string'), 'tools': Value('string'), 'tool_calls': Value('string')}]})
         self.samples = load_dataset('json', data_files=jsonl_path, split='train', features=features)
         self.bos_id = tokenizer(f'{tokenizer.bos_token}assistant\n', add_special_tokens=False).input_ids
@@ -110,13 +155,11 @@ class SFTDataset(Dataset):
         prompt = self.create_chat_prompt(conversations)
         prompt = post_processing_chat(prompt)
         input_ids = self.tokenizer(prompt).input_ids[:self.max_length]
-        input_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
         labels = self.generate_labels(input_ids)
-        # # === Debug print ===
-        # print(f"\n--- Sample {index} ---")
-        # for i, (x, y) in enumerate(zip(input_ids[:-1], labels[1:])):
-        #     print(f"{i:3d}: X={self.tokenizer.decode([x])!r:16s} ---> Y={self.tokenizer.decode([input_ids[i+1]])!r:16s} label={y}")
-        # # ================
+        if self.pad:
+            pad_n = self.max_length - len(input_ids)
+            input_ids = input_ids + [self.tokenizer.pad_token_id] * pad_n
+            labels = labels + [-100] * pad_n
         return torch.tensor(input_ids, dtype=torch.long), torch.tensor(labels, dtype=torch.long)
 
 
