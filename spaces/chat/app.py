@@ -26,7 +26,7 @@ def load_weights(force: bool = False) -> str:
     model = AutoModelForCausalLM.from_pretrained(
         local_dir,
         trust_remote_code=True,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     ).to("cuda").eval()
     _state["model"] = model
     _state["tokenizer"] = tokenizer
@@ -113,9 +113,9 @@ This is a **~64M** model on ZeroGPU. The current T4 checkpoint was trained on th
         type="messages",
         additional_inputs=[temperature, max_new_tokens, open_thinking],
         examples=[
-            "Why is the sky blue?",
-            "Write a Python function to compute Fibonacci numbers.",
-            "Explain photosynthesis in two sentences.",
+            ["Why is the sky blue?"],
+            ["Write a Python function to compute Fibonacci numbers."],
+            ["Explain photosynthesis in two sentences."],
         ],
     )
 
