@@ -12,6 +12,7 @@
 [![GitHub last commit](https://img.shields.io/github/last-commit/jingyaogong/minimind)](https://github.com/jingyaogong/minimind/commits/master)
 [![GitHub pull request](https://img.shields.io/badge/PRs-welcome-blue)](https://github.com/jingyaogong/minimind/pulls)
 [![Collection](https://img.shields.io/badge/🤗-MiniMind%20%20Collection-blue)](https://huggingface.co/collections/jingyaogong/minimind-66caf8d999f5c7fa64f399e5)
+[![HF Model](https://img.shields.io/badge/🤗-meet447%2Fminimind-yellow)](https://huggingface.co/meet447/minimind)
 
 </div>
 
@@ -31,7 +32,7 @@ English | [中文](./README_zh.md)
 
 </div>
 
-> **English-first fork** of [jingyaogong/minimind](https://github.com/jingyaogong/minimind). Code, CLI, eval prompts, and docs are maintained in English. The original Chinese README is at [README_zh.md](./README_zh.md). Quality and data plan: [docs/ROADMAP.md](./docs/ROADMAP.md).
+> **English-first fork** of [jingyaogong/minimind](https://github.com/jingyaogong/minimind). Code, CLI, eval prompts, and docs are maintained in English. The original Chinese README is at [README_zh.md](./README_zh.md). Quality and data plan: [docs/ROADMAP.md](./docs/ROADMAP.md). Latest trained weights live on Hugging Face: [meet447/minimind](https://huggingface.co/meet447/minimind). Re-export after a run with `python scripts/push_to_hub.py` (`HF_TOKEN` in the environment).
 
 * This open-source project aims to train MiniMind, an ultra-small language model with about 64M parameters, entirely from scratch with only about RMB 3 in cost and 2 hours of training time.
 * The MiniMind series is intentionally lightweight. The smallest model on the main branch is about $\frac{1}{2700}$ the size of GPT-3, making full training and reproduction feasible even on ordinary personal GPUs.

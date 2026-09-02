@@ -235,3 +235,5 @@ Defaults to keep: `bfloat16`, `grad_clip=1.0`, `use_moe=0`, flash attn, tied emb
 4. DPO English (Phase 5) only if SFT generation is already coherent.
 
 Each step should be measurable: padding%, tokens/sec, English chars/token, and a fixed 20-prompt qualitative file plus ARC-Easy / HellaSwag when compute allows.
+
+Trained checkpoints for this fork are stored and overwritten on [meet447/minimind](https://huggingface.co/meet447/minimind). After a pretrain/SFT run, push with `HF_TOKEN` set and `python scripts/push_to_hub.py`.
