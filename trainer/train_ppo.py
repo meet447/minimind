@@ -32,18 +32,18 @@ def rep_penalty(text, n=3, cap=0.5):
     return min(cap, (len(grams) - len(set(grams))) * cap * 2 / len(grams)) if grams else 0.0
 
 
-# 自定义的Critic模型，继承自MiniMindLM
+# Custom Critic model extending MiniMindLM
 class CriticModel(MiniMindForCausalLM):
     def __init__(self, params):
         super().__init__(params)
-        # 替换lm_head为输出单一价值的线性层
+        # Replace lm_head with a linear layer outputting a scalar value
         self.value_head = nn.Linear(params.hidden_size, 1)
 
     def forward(self, input_ids=None, attention_mask=None, **kwargs):
-        # 使用基础模型获取隐藏状态
+        # Get hidden states from base model
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
         hidden_states = self.model.norm(outputs[0])
-        # 使用value_head获取价值估计
+        # Get value estimates from value_head
         values = self.value_head(hidden_states).squeeze(-1)
         return values
 
@@ -126,7 +126,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
         resp_policy_mask = ((resp_idx < resp_lengths.unsqueeze(1)) & resp_pad_mask).float()
         resp_value_mask = resp_policy_mask.clone()
 
-        with torch.no_grad():  # Rollout阶段只需推理获取old_logp和old_values，切断梯度省显存
+        with torch.no_grad():  # Rollout: inference only for old_logp/old_values; no grad to save memory
             critic_for_rollout = critic_model.module if isinstance(critic_model, DistributedDataParallel) else critic_model
             values_seq = critic_for_rollout(input_ids=gen_out, attention_mask=full_mask)
             old_resp_values = values_seq.gather(1, logp_pos) * resp_value_mask
@@ -134,7 +134,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             ref_resp_logp = F.log_softmax(ref_model(input_ids=gen_out, attention_mask=full_mask).logits[:, :-1], dim=-1).gather(2, labels.unsqueeze(-1)).squeeze(-1).gather(1, logp_pos)
             token_rewards = torch.zeros_like(old_resp_logp)
             last_idx = resp_lengths - 1  # [B]
-            token_rewards[torch.arange(B, device=args.device)[valid_resp], last_idx[valid_resp]] += rewards[valid_resp]  # 末尾加外部奖励
+            token_rewards[torch.arange(B, device=args.device)[valid_resp], last_idx[valid_resp]] += rewards[valid_resp]  # add external reward at end
 
             gen_len = old_resp_values.size(1); lastgaelam = torch.zeros(B, device=args.device); advs_rev = []
             for t in reversed(range(gen_len)):
@@ -173,13 +173,12 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 with autocast_ctx:
                     res = actor_unwrapped(input_ids=gen_out[inds], attention_mask=full_mask[inds])
                     aux_loss = res.aux_loss if lm_config.use_moe else torch.tensor(0.0, device=args.device)
-                    # 在 autocast 内计算 log_softmax，避免直接对 fp16/bf16 logits
-                    # 计算造成额外数值偏差。
+                    # Compute log_softmax inside autocast to avoid extra numeric bias from fp16/bf16 logits.
                     mb_resp_logp = F.log_softmax(res.logits[:, :-1], dim=-1).gather(2, labels[inds].unsqueeze(-1)).squeeze(-1).gather(1, logp_pos[inds])
 
                 log_ratio = mb_resp_logp - old_resp_logp[inds]
 
-                # 可开关的诊断：观察首轮首个 minibatch 的 mb 与 old logp 差异。
+                # Optional diagnostic: compare mb vs old logp on first minibatch of first epoch.
                 if args.debug_log_ratio and ppo_epoch == 0 and i == 0 and is_main_process():
                     _lr = log_ratio.detach()
                     _m = resp_policy_mask[inds].bool()
@@ -193,7 +192,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                                f"training={actor_unwrapped.training}")
                 approx_kl = (0.5 * (log_ratio ** 2) * resp_policy_mask[inds]).sum() / resp_policy_mask[inds].sum().clamp(min=1)
                 
-                # 同步各卡的 approx_kl，防止某卡 break 而其它卡继续导致 DDP 死锁
+                # Sync approx_kl across ranks to avoid DDP deadlock when one rank breaks early
                 approx_kl_val = approx_kl.detach().clone()
                 if dist.is_initialized():
                     dist.all_reduce(approx_kl_val, op=dist.ReduceOp.AVG)
@@ -218,7 +217,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 kl = approx_kl_val
                 kl_ref = kl_ref_penalty.detach()
 
-                # 早停时必须保证 forward-backward 闭环，故只截断 loss 不中断 DDP 通信
+                # On early stop, zero loss but keep forward-backward loop for DDP sync
                 if stop_ppo:
                     loss = (policy_loss + args.vf_coef * value_loss + aux_loss) * 0.0
                 else:
@@ -293,7 +292,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             actor_state = raw_actor.state_dict()
             torch.save({k: v.half().cpu() for k, v in actor_state.items()}, ckp)
             
-            # 使用 lm_checkpoint 保存完整状态（包括 critic）
+            # Save full state via lm_checkpoint (including critic)
             lm_checkpoint(lm_config, weight=args.save_weight, model=actor_model, optimizer=actor_optimizer, 
                          epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints',
                          scheduler=actor_scheduler, critic_model=critic_model, 
@@ -308,66 +307,66 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind PPO (Proximal Policy Optimization)")
-    parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
-    parser.add_argument('--save_weight', default='ppo_actor', type=str, help="保存权重的前缀名")
-    parser.add_argument("--epochs", type=int, default=1, help="训练轮数")
+    parser.add_argument("--save_dir", type=str, default="../out", help="Directory to save model checkpoints")
+    parser.add_argument('--save_weight', default='ppo_actor', type=str, help="Prefix name for saved weights")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=2, help="batch size")
-    parser.add_argument("--learning_rate", type=float, default=3e-7, help="Actor学习率")
-    parser.add_argument("--critic_learning_rate", type=float, default=5e-7, help="Critic学习率")
-    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
-    parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
-    parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
-    parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
-    parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
-    parser.add_argument("--log_interval", type=int, default=1, help="日志打印间隔")
-    parser.add_argument("--save_interval", type=int, default=10, help="模型保存间隔")
-    parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
-    parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
-    parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
-    parser.add_argument('--max_seq_len', default=768, type=int, help="Prompt最大长度")
-    parser.add_argument("--max_gen_len", type=int, default=1024, help="生成的最大长度")
-    parser.add_argument("--data_path", type=str, default="../dataset/rlaif.jsonl", help="RLAIF数据路径")
-    parser.add_argument("--clip_epsilon", type=float, default=0.2, help="PPO裁剪参数")
-    parser.add_argument("--vf_coef", type=float, default=0.5, help="Value function系数")
-    parser.add_argument("--kl_coef", type=float, default=0.02, help="KL散度惩罚系数")
-    parser.add_argument("--gamma", type=float, default=1.0, help="GAE折扣因子")
-    parser.add_argument("--lam", type=float, default=0.95, help="GAE lambda参数")
-    parser.add_argument("--cliprange_value", type=float, default=0.2, help="Value function裁剪范围")
-    parser.add_argument("--ppo_update_iters", type=int, default=2, help="同一批rollout重复更新次数")
-    parser.add_argument("--early_stop_kl", type=float, default=0.25, help="PPO early stop 的 KL 阈值")
-    parser.add_argument("--mini_batch_size", type=int, default=2, help="PPO每次更新的minibatch大小")
-    parser.add_argument('--from_weight', default='full_sft', type=str, help="基于哪个权重训练")
-    parser.add_argument("--reward_model_path", type=str, default="../../internlm2-1_8b-reward", help="Reward模型路径")
-    parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
-    parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
-    parser.add_argument("--wandb_project", type=str, default="MiniMind-PPO", help="wandb项目名")
-    parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速（0=否，1=是）")
-    parser.add_argument("--debug_mode", action="store_true", help="是否打印训练调试采样")
-    parser.add_argument("--debug_interval", type=int, default=20, help="debug模式下每隔多少step打印一次采样")
-    parser.add_argument("--debug_log_ratio", action="store_true", help="打印首轮首个minibatch的log_ratio差异量级，用于核查ratio≈1是否成立")
-    parser.add_argument("--thinking_ratio", type=float, default=0.9, help="按概率开启thinking（0.0~1.0）")
-    parser.add_argument("--rollout_engine", type=str, default="torch", choices=["torch", "sglang"], help="rollout引擎类型")
-    parser.add_argument("--sglang_base_url", type=str, default="http://localhost:8998", help="SGLang服务器URL")
-    parser.add_argument("--sglang_model_path", type=str, default="../model", help="SGLang tokenizer路径")
-    parser.add_argument("--sglang_shared_path", type=str, default="./sglang_ckpt_ppo", help="SGLang共享存储路径")
+    parser.add_argument("--learning_rate", type=float, default=3e-7, help="Actor learning rate")
+    parser.add_argument("--critic_learning_rate", type=float, default=5e-7, help="Critic learning rate")
+    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="Training device")
+    parser.add_argument("--dtype", type=str, default="bfloat16", help="Mixed precision dtype")
+    parser.add_argument("--num_workers", type=int, default=8, help="Number of data loader workers")
+    parser.add_argument("--accumulation_steps", type=int, default=1, help="Gradient accumulation steps")
+    parser.add_argument("--grad_clip", type=float, default=1.0, help="Gradient clipping threshold")
+    parser.add_argument("--log_interval", type=int, default=1, help="Logging interval (steps)")
+    parser.add_argument("--save_interval", type=int, default=10, help="Checkpoint save interval (steps)")
+    parser.add_argument('--hidden_size', default=768, type=int, help="Hidden size")
+    parser.add_argument('--num_hidden_layers', default=8, type=int, help="Number of hidden layers")
+    parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="Use MoE architecture (0=no, 1=yes)")
+    parser.add_argument('--max_seq_len', default=768, type=int, help="Maximum prompt length")
+    parser.add_argument("--max_gen_len", type=int, default=1024, help="Maximum generation length")
+    parser.add_argument("--data_path", type=str, default="../dataset/rlaif.jsonl", help="RLAIF data path")
+    parser.add_argument("--clip_epsilon", type=float, default=0.2, help="PPO clip epsilon")
+    parser.add_argument("--vf_coef", type=float, default=0.5, help="Value function coefficient")
+    parser.add_argument("--kl_coef", type=float, default=0.02, help="KL divergence penalty coefficient")
+    parser.add_argument("--gamma", type=float, default=1.0, help="GAE discount factor (gamma)")
+    parser.add_argument("--lam", type=float, default=0.95, help="GAE lambda")
+    parser.add_argument("--cliprange_value", type=float, default=0.2, help="Value function clip range")
+    parser.add_argument("--ppo_update_iters", type=int, default=2, help="PPO update iterations per rollout batch")
+    parser.add_argument("--early_stop_kl", type=float, default=0.25, help="KL threshold for PPO early stopping")
+    parser.add_argument("--mini_batch_size", type=int, default=2, help="Minibatch size per PPO update")
+    parser.add_argument('--from_weight', default='full_sft', type=str, help="Base checkpoint to train from")
+    parser.add_argument("--reward_model_path", type=str, default="../../internlm2-1_8b-reward", help="Reward model path")
+    parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="Auto-detect and resume training (0=no, 1=yes)")
+    parser.add_argument("--use_wandb", action="store_true", help="Enable Weights & Biases logging")
+    parser.add_argument("--wandb_project", type=str, default="MiniMind-PPO", help="W&B project name")
+    parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="Use torch.compile for speed (0=no, 1=yes)")
+    parser.add_argument("--debug_mode", action="store_true", help="Print debug rollout samples during training")
+    parser.add_argument("--debug_interval", type=int, default=20, help="Debug sample print interval (steps)")
+    parser.add_argument("--debug_log_ratio", action="store_true", help="Log log_ratio magnitude on first minibatch of first epoch to verify ratio≈1")
+    parser.add_argument("--thinking_ratio", type=float, default=0.9, help="Probability of enabling thinking mode (0.0-1.0)")
+    parser.add_argument("--rollout_engine", type=str, default="torch", choices=["torch", "sglang"], help="Rollout engine type")
+    parser.add_argument("--sglang_base_url", type=str, default="http://localhost:8998", help="SGLang server URL")
+    parser.add_argument("--sglang_model_path", type=str, default="../model", help="SGLang tokenizer path")
+    parser.add_argument("--sglang_shared_path", type=str, default="./sglang_ckpt_ppo", help="SGLang shared checkpoint path")
     args = parser.parse_args()
 
-    # ========== 1. 初始化环境和随机种子 ==========
+    # ========== 1. Init environment and random seed ==========
     local_rank = init_distributed_mode()
     if dist.is_initialized(): args.device = f"cuda:{local_rank}"
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
-    # ========== 2. 配置目录、模型参数、检查ckp ==========
+    # ========== 2. Configure dirs, model config, check checkpoint ==========
     os.makedirs(args.save_dir, exist_ok=True)
     lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe))
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
-    # ========== 3. 设置混合精度 ==========
+    # ========== 3. Set up mixed precision ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
     autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
     
-    # ========== 4. 配wandb ==========
+    # ========== 4. Configure wandb ==========
     wandb = None
     if args.use_wandb and is_main_process():
         import swanlab as wandb
@@ -376,9 +375,9 @@ if __name__ == "__main__":
         wandb_run_name = f"MiniMind-PPO-Epoch-{args.epochs}-BS-{args.batch_size}-LR-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
     
-    # ========== 5. 初始化模型和数据 ==========
+    # ========== 5. Init models and data ==========
     base_weight = args.from_weight
-    # Actor模型
+    # Actor model
     actor_model, tokenizer = init_model(lm_config, base_weight, device=args.device)
     ref_model, _ = init_model(lm_config, base_weight, device=args.device)
     ref_model = ref_model.eval().requires_grad_(False)
@@ -389,7 +388,7 @@ if __name__ == "__main__":
     critic_model.load_state_dict(state_dict, strict=False)
     critic_model = critic_model.to(args.device)
     reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)
-    # Rollout引擎
+    # Rollout engine
     rollout_engine = create_rollout_engine(
         engine_type=args.rollout_engine,
         policy_model=actor_model,
@@ -422,7 +421,7 @@ if __name__ == "__main__":
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
     
-    # ========== 7. 编译和分布式包装 ==========
+    # ========== 7. Compile and distributed wrap ==========
     if args.use_compile == 1:
         actor_model = torch.compile(actor_model)
         Logger('torch.compile enabled')
@@ -432,7 +431,7 @@ if __name__ == "__main__":
         critic_model = DistributedDataParallel(critic_model, device_ids=[local_rank])
     rollout_engine.update_policy(actor_model)
     
-    # ========== 8. 开始训练 ==========
+    # ========== 8. Start training ==========
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
@@ -440,12 +439,12 @@ if __name__ == "__main__":
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
         if skip > 0: 
-            Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
+            Logger(f'Epoch [{epoch + 1}/{args.epochs}]: skipping first {start_step} steps, resuming from step {start_step + 1}')
             ppo_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, start_step, wandb)
         else:
             ppo_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, 0, wandb)
     
-    # ========== 9. 清理分布进程 ==========
+    # ========== 9. Tear down distributed process group ==========
     if dist.is_initialized():
         dist.barrier()
         dist.destroy_process_group()

@@ -1,5 +1,5 @@
 """
-# 如果使用sglang加速，需通过以下命令首先启动（transformers格式）模型：
+# To use SGLang acceleration, start the (transformers-format) model first:
 python -m sglang.launch_server --model-path ./minimind-3 --attention-backend triton --host 0.0.0.0 --port 8998
 """
 import os
@@ -20,7 +20,7 @@ from torch.nn.parallel import DistributedDataParallel
 from transformers import AutoTokenizer
 
 
-# ===== 计算每个 token 的 logprob =====
+# ===== Per-token logprob computation =====
 def compute_per_token_logps(model, input_ids: Tensor, n_keep: int, attention_mask: Optional[Tensor] = None) -> Tensor:
     if n_keep <= 0:
         return input_ids.new_empty((input_ids.size(0), 0), dtype=torch.float32)
@@ -36,7 +36,7 @@ def compute_per_token_logps(model, input_ids: Tensor, n_keep: int, attention_mas
     return torch.stack(per_token_logps)
 
 
-# ===== Rollout 结果 =====
+# ===== Rollout result =====
 @dataclass
 class RolloutResult:
     output_ids: Tensor
@@ -47,7 +47,7 @@ class RolloutResult:
     completion_mask: Tensor
 
 
-# ===== Rollout 引擎抽象基类 =====
+# ===== Rollout engine abstract base class =====
 class RolloutEngine(ABC):
     tokenizer = None
     
@@ -60,7 +60,7 @@ class RolloutEngine(ABC):
         pass
 
 
-# ===== PyTorch 原生推理引擎 =====
+# ===== Native PyTorch inference engine =====
 class TorchRolloutEngine(RolloutEngine):
     def __init__(self, policy_model: torch.nn.Module, tokenizer, device: str = "cuda", autocast_ctx=None):
         self.policy_model = policy_model
@@ -95,7 +95,7 @@ class TorchRolloutEngine(RolloutEngine):
         self.policy_model = model
 
 
-# ===== SGLang HTTP API 推理引擎 =====
+# ===== SGLang HTTP API inference engine =====
 class SGLangRolloutEngine(RolloutEngine):
     def __init__(self, base_url: str, model_path: str, shared_ckpt_path: str = "./sglang_ckpt", timeout: int = 120):
         self.base_url = base_url.rstrip('/')
@@ -105,7 +105,7 @@ class SGLangRolloutEngine(RolloutEngine):
         self.http = requests
     
     def rollout(self, prompt_ids: Tensor, attention_mask: Tensor, num_generations: int, max_new_tokens: int, temperature: float = 0.8) -> RolloutResult:
-        # 去除左侧 padding tokens，只保留有效 token
+        # Strip left padding; keep valid tokens only
         input_ids_list = []
         for ids, mask in zip(prompt_ids, attention_mask):
             valid_ids = ids[mask.bool()].tolist()
@@ -183,10 +183,10 @@ class SGLangRolloutEngine(RolloutEngine):
                 unwrapped.save_pretrained(abs_path, state_dict=state_dict, safe_serialization=False)
                 self.tokenizer.save_pretrained(abs_path)
                 resp = self.http.post(f"{self.base_url}/update_weights_from_disk", json={"model_path": abs_path}, timeout=self.timeout)
-                if resp.status_code != 200: print(f"[SGLANG WARNING] update_weights 失败: {resp.status_code}, {resp.text}")
+                if resp.status_code != 200: print(f"[SGLANG WARNING] update_weights failed: {resp.status_code}, {resp.text}")
                 ok = resp.status_code == 200
             except Exception as e:
-                print(f"[SGLANG WARNING] update_weights 异常: {e}"); ok = False
+                print(f"[SGLANG WARNING] update_weights error: {e}"); ok = False
         if dist.is_initialized():
             ok_t = torch.tensor(int(ok), device=next(model.parameters()).device)
             dist.broadcast(ok_t, src=0); dist.barrier(); ok = bool(ok_t.item())
@@ -205,7 +205,7 @@ class SGLangRolloutEngine(RolloutEngine):
             return False
 
 
-# ===== 工厂函数 =====
+# ===== Factory function =====
 def create_rollout_engine(
     engine_type: str = "torch",
     policy_model: torch.nn.Module = None,
@@ -221,4 +221,4 @@ def create_rollout_engine(
     elif engine_type == "sglang":
         return SGLangRolloutEngine(sglang_base_url, sglang_model_path, sglang_shared_path)
     else:
-        raise ValueError(f"不支持的引擎类型: {engine_type}")
+        raise ValueError(f"Unsupported engine type: {engine_type}")

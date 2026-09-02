@@ -7,29 +7,30 @@ from datasets import load_dataset, Features, Sequence, Value
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def pre_processing_chat(conversations, add_system_ratio=0.2):
-    # tool use 数据完整保留不做处理
+    # Keep tool-use samples intact without modification
     if any(conv.get('tools') for conv in conversations): return conversations
 
     SYSTEM_PROMPTS = [
-        "你是一个知识丰富的AI，尽力为用户提供准确的信息。",
-        "你是minimind，一个小巧但有用的语言模型。",
-        "你是一个专业的AI助手，请提供有价值的回答。",
-        "你是minimind，请尽力帮助用户解决问题。",
-        "你是一个可靠的AI，请给出准确的回答。",
         "You are a helpful AI assistant.",
         "You are minimind, a lightweight intelligent assistant.",
         "You are a friendly chatbot. Please answer the user's questions carefully.",
         "You are a knowledgeable AI. Try your best to provide accurate information.",
-        "You are minimind, a small but useful language model."
+        "You are minimind, a small but useful language model.",
+        "You are a professional AI assistant. Please provide valuable answers.",
+        "You are a reliable AI. Please give accurate responses.",
+        "You are minimind. Please do your best to help users solve problems.",
+        "你是一个知识丰富的AI，尽力为用户提供准确的信息。",
+        "你是minimind，一个小巧但有用的语言模型。",
+        "你是一个专业的AI助手，请提供有价值的回答。",
     ]
-    # 概率性添加system
+    # Probabilistically prepend a system message
     if conversations[0].get('role') != 'system':
         if random.random() < add_system_ratio:
             return [{'role': 'system', 'content': random.choice(SYSTEM_PROMPTS)}] + conversations
     return conversations
 
 def post_processing_chat(prompt_content, empty_think_ratio=0.2):
-    # 以80%概率移除空思考标签
+    # Remove empty thinking tags with 80% probability
     if '<think>\n\n</think>\n\n' in prompt_content and random.random() > empty_think_ratio:
         prompt_content = prompt_content.replace('<think>\n\n</think>\n\n', '')
     return prompt_content
@@ -111,7 +112,7 @@ class SFTDataset(Dataset):
         input_ids = self.tokenizer(prompt).input_ids[:self.max_length]
         input_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
         labels = self.generate_labels(input_ids)
-        # # === 调试打印 ===
+        # # === Debug print ===
         # print(f"\n--- Sample {index} ---")
         # for i, (x, y) in enumerate(zip(input_ids[:-1], labels[1:])):
         #     print(f"{i:3d}: X={self.tokenizer.decode([x])!r:16s} ---> Y={self.tokenizer.decode([input_ids[i+1]])!r:16s} label={y}")
@@ -134,8 +135,8 @@ class DPODataset(Dataset):
 
     def __getitem__(self, index):
         sample = self.samples[index]
-        chosen = sample['chosen']  # 是一个 list，里面包含若干 {role, content}
-        rejected = sample['rejected']  # 同上
+        chosen = sample['chosen']  # A list of {role, content} dicts
+        rejected = sample['rejected']  # Same structure as chosen
         chosen_prompt = self.tokenizer.apply_chat_template(
             chosen, tokenize=False, add_generation_prompt=False
         )
@@ -197,7 +198,7 @@ class RLAIFDataset(Dataset):
         super().__init__()
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.thinking_ratio = thinking_ratio  # 按概率开启 thinking
+        self.thinking_ratio = thinking_ratio  # Enable thinking with this probability
         self.samples = load_dataset('json', data_files=jsonl_path, split='train')
         self.bos_id = tokenizer(f'{tokenizer.bos_token}assistant', add_special_tokens=False).input_ids
         self.eos_id = tokenizer(f'{tokenizer.eos_token}', add_special_tokens=False).input_ids
