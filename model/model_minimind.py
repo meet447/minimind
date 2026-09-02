@@ -241,6 +241,28 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
         if self.config.tie_word_embeddings: self.model.embed_tokens.weight = self.lm_head.weight
         self.post_init()
+        self._scale_residual_projections()
+
+    def _init_weights(self, module):
+        std = 0.02
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=std)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=std)
+
+    def _scale_residual_projections(self):
+        # GPT-2 / Small-init: shrink residual branches as depth grows (needed at 16 layers).
+        scale = 1.0 / math.sqrt(2 * self.config.num_hidden_layers)
+        for layer in self.model.layers:
+            layer.self_attn.o_proj.weight.data.mul_(scale)
+            mlp = layer.mlp
+            if isinstance(mlp, FeedForward):
+                mlp.down_proj.weight.data.mul_(scale)
+            elif isinstance(mlp, MOEFeedForward):
+                for expert in mlp.experts:
+                    expert.down_proj.weight.data.mul_(scale)
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, **kwargs):
         hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)

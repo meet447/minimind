@@ -17,4 +17,26 @@ agent_rl_math.jsonl       # 18MB
 
 Formats: pretrain `{"text": "..."}`; SFT `{"conversations": [...]}`; DPO `{"chosen": [...], "rejected": [...]}`.
 
-**English mix** (this fork): see [docs/ROADMAP.md](../docs/ROADMAP.md) Phase 3. Target names: `pretrain_en_mini.jsonl`, `sft_en_mini.jsonl`, `dpo_en.jsonl`.
+**English mix** (this fork): see [docs/ROADMAP.md](../docs/ROADMAP.md) Phase 3.
+
+| File | ~size | Role |
+|------|-------|------|
+| `pretrain_en_mini.jsonl` | 1.5–2.0 GB | English pretrain (`{"text": "..."}`) |
+| `sft_en_mini.jsonl` | 0.8–1.2 GB | English SFT (`{"conversations": [...]}`) |
+| `dpo_en.jsonl` | (later) | English DPO |
+
+Generate the English mini files locally (not vendored in git):
+
+```bash
+python scripts/prepare_english_data.py \
+  --out-dir dataset \
+  --pretrain-gb 1.6 \
+  --sft-rows 250000 \
+  --seed 42
+```
+
+`--dry-run` prints the planned byte/row budgets per source without downloading or writing. Use `--no-dedup` to skip light MinHash deduplication.
+
+**Pretrain mix (streaming):** ~75% `HuggingFaceFW/fineweb-edu` (`sample-10BT`), ~15% `roneneldan/TinyStories`, ~10% `HuggingFaceTB/smollm-corpus` (`cosmopedia-v2`). Optional code (`python-edu`) is skipped — the Hub subset is metadata-only.
+
+**SFT:** `HuggingFaceTB/smoltalk` (`all`) → `user` / `assistant` / `system` turns only; tool-call traces dropped.

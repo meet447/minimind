@@ -15,8 +15,9 @@ from torch import optim, nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
+from model.presets import apply_preset
 from dataset.lm_dataset import SFTDataset, collate_sft_dynamic
-from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, create_optimizer
+from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, create_optimizer, weight_tag
 
 warnings.filterwarnings('ignore')
 
@@ -63,8 +64,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
 
         if (step % args.save_interval == 0 or step == iters) and is_main_process():
             model.eval()
-            moe_suffix = '_moe' if lm_config.use_moe else ''
-            ckp = f'{args.save_dir}/{args.save_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+            ckp = f'{args.save_dir}/{args.save_weight}_{weight_tag(lm_config)}.pth'
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()
@@ -98,6 +98,7 @@ if __name__ == "__main__":
     parser.add_argument("--grad_clip", type=float, default=1.0, help="Gradient clipping threshold")
     parser.add_argument("--log_interval", type=int, default=100, help="Logging interval (steps)")
     parser.add_argument("--save_interval", type=int, default=1000, help="Checkpoint save interval (steps)")
+    parser.add_argument('--preset', default='', type=str, help="Size preset: minimind-3 (8x768) or minimind-128 (16x768)")
     parser.add_argument('--hidden_size', default=768, type=int, help="Hidden size")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="Number of hidden layers")
     parser.add_argument('--max_seq_len', default=768, type=int, help="Max sequence length in tokens (Chinese ~1.5-1.7 chars/token; English ~4-5 chars/token)")
@@ -112,6 +113,7 @@ if __name__ == "__main__":
     parser.add_argument("--warmup_ratio", default=0.03, type=float, help="Linear LR warmup fraction of total steps")
     parser.add_argument("--weight_decay", default=0.1, type=float, help="AdamW weight decay on matmul weights")
     args = parser.parse_args()
+    apply_preset(args)
 
     # ========== 1. Init environment and random seed ==========
     local_rank = init_distributed_mode()
