@@ -236,4 +236,4 @@ Defaults to keep: `bfloat16`, `grad_clip=1.0`, `use_moe=0`, flash attn, tied emb
 
 Each step should be measurable: padding%, tokens/sec, English chars/token, and a fixed 20-prompt qualitative file plus ARC-Easy / HellaSwag when compute allows.
 
-Trained checkpoints for this fork are stored and overwritten on [meet447/minimind](https://huggingface.co/meet447/minimind). After a pretrain/SFT run, push with `HF_TOKEN` set and `python scripts/push_to_hub.py`.
+Trained checkpoints for this fork are stored and overwritten on [meet447/minimind](https://huggingface.co/meet447/minimind). Chat UI: [meet447/minimind-chat](https://huggingface.co/spaces/meet447/minimind-chat). After a pretrain/SFT run, push with `HF_TOKEN` set and `python scripts/push_to_hub.py`. After Space app edits, `python scripts/push_space.py`.

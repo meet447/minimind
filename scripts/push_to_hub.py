@@ -51,6 +51,8 @@ base_model: jingyaogong/minimind-3
 This Hub repo is the **living weight store**. New pretrain / SFT / later English
 runs overwrite `main` so you can always pull the latest.
 
+Chat with the current `main` weights: [meet447/minimind-chat](https://huggingface.co/spaces/meet447/minimind-chat).
+
 ## Current weights (T4, 2026-09-02)
 
 | File | Stage | Notes |
